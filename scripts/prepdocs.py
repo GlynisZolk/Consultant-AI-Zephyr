@@ -169,11 +169,6 @@ if __name__ == "__main__":
         epilog="Example: prepdocs.py --searchservice mysearch --index myindex",
     )
     parser.add_argument(
-        "--tenantid",
-        required=False,
-        help="Optional. Use this to define the Azure directory where to authenticate)",
-    )
-    parser.add_argument(
         "--searchservice",
         help="Name of the Azure Cognitive Search service where content should be indexed (must exist already)",
     )

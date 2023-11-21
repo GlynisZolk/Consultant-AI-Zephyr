@@ -24,10 +24,6 @@ param allowedOrigins array = []
 param alwaysOn bool = true
 param appCommandLine string = ''
 param appSettings object = {}
-param authClientId string
-@secure()
-param authClientSecret string
-param authIssuerUri string
 param clientAffinityEnabled bool = false
 param enableOryxBuild bool = contains(kind, 'linux')
 param functionAppScaleLimit int = -1
@@ -75,7 +71,6 @@ resource appService 'Microsoft.Web/sites@2022-03-01' = {
       },
       !empty(applicationInsightsName) ? { APPLICATIONINSIGHTS_CONNECTION_STRING: applicationInsights.properties.ConnectionString } : {},
       !empty(keyVaultName) ? { AZURE_KEY_VAULT_ENDPOINT: keyVault.properties.vaultUri } : {},
-      !empty(authClientSecret) ? { AUTH_CLIENT_SECRET: authClientSecret } : {}
     )
   }
 
@@ -90,37 +85,6 @@ resource appService 'Microsoft.Web/sites@2022-03-01' = {
     dependsOn: [
       configAppSettings
     ]
-  }
-
-  resource configAuth 'config' = if (!(empty(authClientId))) {
-    name: 'authsettingsV2'
-    properties: {
-      globalValidation: {
-        requireAuthentication: true
-        unauthenticatedClientAction: 'RedirectToLoginPage'
-        redirectToProvider: 'azureactivedirectory'
-      }
-      identityProviders: {
-        azureActiveDirectory: {
-          enabled: true
-          registration: {
-            clientId: authClientId
-            clientSecretSettingName: 'AUTH_CLIENT_SECRET'
-            openIdIssuer: authIssuerUri
-          }
-          validation: {
-            defaultAuthorizationPolicy: {
-              allowedApplications: []
-            }
-          }
-        }
-      }
-      login: {
-        tokenStore: {
-          enabled: true
-        }
-      }
-    }
   }
 }
 

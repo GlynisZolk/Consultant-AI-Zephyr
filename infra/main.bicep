@@ -49,10 +49,7 @@ param formRecognizerResourceGroupName string = ''
 param formRecognizerResourceGroupLocation string = location
 param formRecognizerSkuName string = ''
 
-// Used for the Azure AD application
-param authClientId string
-@secure()
-param authClientSecret string
+
 
 // Used for Cosmos DB
 param cosmosAccountName string = ''
@@ -110,10 +107,7 @@ module backend 'core/host/appservice.bicep' = {
     runtimeName: 'python'
     runtimeVersion: '3.10'
     scmDoBuildDuringDeployment: true
-    managedIdentity: true
-    authClientSecret: authClientSecret
-    authClientId: authClientId
-    authIssuerUri: authIssuerUri
+    managedIdentity: false
     appSettings: {
       // search
       AZURE_SEARCH_INDEX: searchIndexName
