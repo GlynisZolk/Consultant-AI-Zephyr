@@ -85,34 +85,11 @@ def is_chat_model():
     return False
 
 def should_use_data():
-    if AZURE_SEARCH_SERVICE and AZURE_SEARCH_INDEX and AZURE_SEARCH_KEY:
-        if DEBUG_LOGGING:
-            logging.debug("Using Azure Cognitive Search")
-        return True
-    
-    if AZURE_COSMOSDB_MONGO_VCORE_DATABASE and AZURE_COSMOSDB_MONGO_VCORE_CONTAINER and AZURE_COSMOSDB_MONGO_VCORE_INDEX and AZURE_COSMOSDB_MONGO_VCORE_CONNECTION_STRING:
-        if DEBUG_LOGGING:
-            logging.debug("Using Azure CosmosDB Mongo vcore")
-        return True
-    
     return False
 
 
 def format_as_ndjson(obj: dict) -> str:
     return json.dumps(obj, ensure_ascii=False) + "\n"
-
-
-def generateFilterString(userToken):
-    # Get list of groups user is a member of
-    userGroups = fetchUserGroups(userToken)
-
-    # Construct filter string
-    if not userGroups:
-        logging.debug("No user groups found")
-
-    group_ids = ", ".join([obj['id'] for obj in userGroups])
-    return f"{AZURE_SEARCH_PERMITTED_GROUPS_COLUMN}/any(g:search.in(g, '{group_ids}'))"
-
 
 
 def prepare_body_headers_with_data(request):
@@ -128,84 +105,6 @@ def prepare_body_headers_with_data(request):
         "dataSources": []
     }
 
-    if DATASOURCE_TYPE == "AzureCognitiveSearch":
-        # Set query type
-        query_type = "simple"
-        if AZURE_SEARCH_QUERY_TYPE:
-            query_type = AZURE_SEARCH_QUERY_TYPE
-        elif AZURE_SEARCH_USE_SEMANTIC_SEARCH.lower() == "true" and AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG:
-            query_type = "semantic"
-
-        # Set filter
-        filter = None
-        userToken = None
-        if AZURE_SEARCH_PERMITTED_GROUPS_COLUMN:
-            userToken = request.headers.get('X-MS-TOKEN-AAD-ACCESS-TOKEN', "")
-            if DEBUG_LOGGING:
-                logging.debug(f"USER TOKEN is {'present' if userToken else 'not present'}")
-
-            filter = generateFilterString(userToken)
-            if DEBUG_LOGGING:
-                logging.debug(f"FILTER: {filter}")
-
-        body["dataSources"].append(
-            {
-                "type": "AzureCognitiveSearch",
-                "parameters": {
-                    "endpoint": f"https://{AZURE_SEARCH_SERVICE}.search.windows.net",
-                    "key": AZURE_SEARCH_KEY,
-                    "indexName": AZURE_SEARCH_INDEX,
-                    "fieldsMapping": {
-                        "contentFields": AZURE_SEARCH_CONTENT_COLUMNS.split("|") if AZURE_SEARCH_CONTENT_COLUMNS else [],
-                        "titleField": AZURE_SEARCH_TITLE_COLUMN if AZURE_SEARCH_TITLE_COLUMN else None,
-                        "urlField": AZURE_SEARCH_URL_COLUMN if AZURE_SEARCH_URL_COLUMN else None,
-                        "filepathField": AZURE_SEARCH_FILENAME_COLUMN if AZURE_SEARCH_FILENAME_COLUMN else None,
-                        "vectorFields": AZURE_SEARCH_VECTOR_COLUMNS.split("|") if AZURE_SEARCH_VECTOR_COLUMNS else []
-                    },
-                    "inScope": True if AZURE_SEARCH_ENABLE_IN_DOMAIN.lower() == "true" else False,
-                    "topNDocuments": AZURE_SEARCH_TOP_K,
-                    "queryType": query_type,
-                    "semanticConfiguration": AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG if AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG else "",
-                    "roleInformation": AZURE_OPENAI_SYSTEM_MESSAGE,
-                    "filter": filter,
-                    "strictness": int(AZURE_SEARCH_STRICTNESS)
-                }
-            })
-    elif DATASOURCE_TYPE == "AzureCosmosDB":
-        # Set query type
-        query_type = "vector"
-
-        body["dataSources"].append(
-            {
-                "type": "AzureCosmosDB",
-                "parameters": {
-                    "connectionString": AZURE_COSMOSDB_MONGO_VCORE_CONNECTION_STRING,
-                    "indexName": AZURE_COSMOSDB_MONGO_VCORE_INDEX,
-                    "databaseName": AZURE_COSMOSDB_MONGO_VCORE_DATABASE,
-                    "containerName": AZURE_COSMOSDB_MONGO_VCORE_CONTAINER,                    
-                    "fieldsMapping": {
-                        "contentFields": AZURE_COSMOSDB_MONGO_VCORE_CONTENT_COLUMNS.split("|") if AZURE_COSMOSDB_MONGO_VCORE_CONTENT_COLUMNS else [],
-                        "titleField": AZURE_COSMOSDB_MONGO_VCORE_TITLE_COLUMN if AZURE_COSMOSDB_MONGO_VCORE_TITLE_COLUMN else None,
-                        "urlField": AZURE_COSMOSDB_MONGO_VCORE_URL_COLUMN if AZURE_COSMOSDB_MONGO_VCORE_URL_COLUMN else None,
-                        "filepathField": AZURE_COSMOSDB_MONGO_VCORE_FILENAME_COLUMN if AZURE_COSMOSDB_MONGO_VCORE_FILENAME_COLUMN else None,
-                        "vectorFields": AZURE_COSMOSDB_MONGO_VCORE_VECTOR_COLUMNS.split("|") if AZURE_COSMOSDB_MONGO_VCORE_VECTOR_COLUMNS else []
-                    },
-                    "inScope": True if AZURE_COSMOSDB_MONGO_VCORE_ENABLE_IN_DOMAIN.lower() == "true" else False,
-                    "topNDocuments": AZURE_COSMOSDB_MONGO_VCORE_TOP_K,
-                    "strictness": int(AZURE_COSMOSDB_MONGO_VCORE_STRICTNESS),
-                    "queryType": query_type,
-                    "roleInformation": AZURE_OPENAI_SYSTEM_MESSAGE
-                }
-            })
-    else:
-        raise Exception(f"DATASOURCE_TYPE is not configured or unknown: {DATASOURCE_TYPE}")
-
-    if "vector" in query_type.lower():
-        if AZURE_OPENAI_EMBEDDING_NAME:
-            body["dataSources"][0]["parameters"]["embeddingDeploymentName"] = AZURE_OPENAI_EMBEDDING_NAME
-        else:
-            body["dataSources"][0]["parameters"]["embeddingEndpoint"] = AZURE_OPENAI_EMBEDDING_ENDPOINT
-            body["dataSources"][0]["parameters"]["embeddingKey"] = AZURE_OPENAI_EMBEDDING_KEY
 
     if DEBUG_LOGGING:
         body_clean = copy.deepcopy(body)
