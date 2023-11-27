@@ -1,8 +1,7 @@
-import { UserInfo, ConversationRequest, Conversation, ChatMessage, CosmosDBHealth, CosmosDBStatus } from "./models";
-import { chatHistorySampleData } from "../constants/chatHistory";
+import {ConversationRequest} from "./models";
 
 export async function conversationApi(options: ConversationRequest, abortSignal: AbortSignal): Promise<Response> {
-    const response = await fetch("/conversation", {
+    return await fetch("/conversation", {
         method: "POST",
         headers: {
             "Content-Type": "application/json"
@@ -12,8 +11,6 @@ export async function conversationApi(options: ConversationRequest, abortSignal:
         }),
         signal: abortSignal
     });
-
-    return response;
 }
 
 export const historyClear = async (convId: string) : Promise<Response> => {
