@@ -19,12 +19,16 @@ import {
     ToolMessageContent,
     ChatResponse,
     Conversation,
+    historyGenerate,
+    historyUpdate,
     historyClear,
+    ChatHistoryLoadingState,
     CosmosDBStatus,
     ErrorMessage
 } from "../../api";
 import { Answer } from "../../components/Answer";
 import { QuestionInput } from "../../components/QuestionInput";
+import { ChatHistoryPanel } from "../../components/ChatHistory/ChatHistoryPanel";
 import { AppStateContext } from "../../state/AppProvider";
 import { useBoolean } from "@fluentui/react-hooks";
 
@@ -64,6 +68,16 @@ const Chat = () => {
 
     const [ASSISTANT, TOOL, ERROR] = ["assistant", "tool", "error"]
 
+    useEffect(() => {
+        if(appStateContext?.state.isCosmosDBAvailable?.status === CosmosDBStatus.NotWorking && appStateContext.state.chatHistoryLoadingState === ChatHistoryLoadingState.Fail && hideErrorDialog){
+            let subtitle = `${appStateContext.state.isCosmosDBAvailable.status}. Please contact the site administrator.`
+            setErrorMsg({
+                title: "Chat history is not enabled",
+                subtitle: subtitle
+            })
+            toggleErrorDialog();
+        }
+    }, [appStateContext?.state.isCosmosDBAvailable]);
 
     const handleErrorDialogClose = () => {
         toggleErrorDialog()
@@ -100,6 +114,7 @@ const Chat = () => {
     const makeApiRequestWithoutCosmosDB = async (question: string, conversationId?: string) => {
         setIsLoading(true);
         setShowLoadingMessage(true);
+        setClearingChat(true);
         const abortController = new AbortController();
         abortFuncs.current.unshift(abortController);
 
@@ -133,7 +148,7 @@ const Chat = () => {
 
         appStateContext?.dispatch({ type: 'UPDATE_CURRENT_CHAT', payload: conversation });
         setMessages(conversation.messages)
-        
+
         const request: ConversationRequest = {
             messages: [...conversation.messages.filter((answer) => answer.role !== ERROR)]
         };
@@ -173,7 +188,7 @@ const Chat = () => {
                 appStateContext?.dispatch({ type: 'UPDATE_CURRENT_CHAT', payload: conversation });
                 setMessages([...messages, toolMessage, assistantMessage]);
             }
-            
+
         } catch ( e )  {
             if (!abortController.signal.aborted) {
                 let errorMessage = "An error occurred. Please try again. If the problem persists, please contact the site administrator.";
@@ -205,10 +220,204 @@ const Chat = () => {
         return abortController.abort();
     };
 
+    const makeApiRequestWithCosmosDB = async (question: string, conversationId?: string) => {
+        setIsLoading(true);
+        setShowLoadingMessage(true);
+        const abortController = new AbortController();
+        abortFuncs.current.unshift(abortController);
+
+        const userMessage: ChatMessage = {
+            id: uuid(),
+            role: "user",
+            content: question,
+            date: new Date().toISOString(),
+        };
+
+        //api call params set here (generate)
+        let request: ConversationRequest;
+        let conversation;
+        if(conversationId){
+            conversation = appStateContext?.state?.chatHistory?.find((conv) => conv.id === conversationId)
+            if(!conversation){
+                console.error("Conversation not found.");
+                setIsLoading(false);
+                setShowLoadingMessage(false);
+                abortFuncs.current = abortFuncs.current.filter(a => a !== abortController);
+                return;
+            }else{
+                conversation.messages.push(userMessage);
+                request = {
+                    messages: [...conversation.messages.filter((answer) => answer.role !== ERROR)]
+                };
+            }
+        }else{
+            request = {
+                messages: [userMessage].filter((answer) => answer.role !== ERROR)
+            };
+            setMessages(request.messages)
+        }
+        let result = {} as ChatResponse;
+        try {
+            const response = conversationId ? await historyGenerate(request, abortController.signal, conversationId) : await historyGenerate(request, abortController.signal);
+            if(!response?.ok){
+                let errorChatMsg: ChatMessage = {
+                    id: uuid(),
+                    role: ERROR,
+                    content: "There was an error generating a response. Chat history can't be saved at this time. If the problem persists, please contact the site administrator.",
+                    date: new Date().toISOString()
+                }
+                let resultConversation;
+                if(conversationId){
+                    resultConversation = appStateContext?.state?.chatHistory?.find((conv) => conv.id === conversationId)
+                    if(!resultConversation){
+                        console.error("Conversation not found.");
+                        setIsLoading(false);
+                        setShowLoadingMessage(false);
+                        abortFuncs.current = abortFuncs.current.filter(a => a !== abortController);
+                        return;
+                    }
+                    resultConversation.messages.push(errorChatMsg);
+                }else{
+                    setMessages([...messages, userMessage, errorChatMsg])
+                    setIsLoading(false);
+                    setShowLoadingMessage(false);
+                    abortFuncs.current = abortFuncs.current.filter(a => a !== abortController);
+                    return;
+                }
+                appStateContext?.dispatch({ type: 'UPDATE_CURRENT_CHAT', payload: resultConversation });
+                setMessages([...resultConversation.messages]);
+                return;
+            }
+            if (response?.body) {
+                const reader = response.body.getReader();
+                let runningText = "";
+
+                while (true) {
+                    setProcessMessages(messageStatus.Processing)
+                    const {done, value} = await reader.read();
+                    if (done) break;
+
+                    var text = new TextDecoder("utf-8").decode(value);
+                    const objects = text.split("\n");
+                    objects.forEach((obj) => {
+                        try {
+                            runningText += obj;
+                            result = JSON.parse(runningText);
+                            result.choices[0].messages.forEach((obj) => {
+                                obj.id = uuid();
+                                obj.date = new Date().toISOString();
+                            })
+                            setShowLoadingMessage(false);
+                            result.choices[0].messages.forEach((resultObj) => {
+                                processResultMessage(resultObj, userMessage, conversationId);
+                            })
+                            runningText = "";
+                        }
+                        catch { }
+                    });
+                }
+
+                let resultConversation;
+                if(conversationId){
+                    resultConversation = appStateContext?.state?.chatHistory?.find((conv) => conv.id === conversationId)
+                    if(!resultConversation){
+                        console.error("Conversation not found.");
+                        setIsLoading(false);
+                        setShowLoadingMessage(false);
+                        abortFuncs.current = abortFuncs.current.filter(a => a !== abortController);
+                        return;
+                    }
+                    isEmpty(toolMessage) ?
+                        resultConversation.messages.push(assistantMessage) :
+                        resultConversation.messages.push(toolMessage, assistantMessage)
+                }else{
+                    resultConversation = {
+                        id: result.history_metadata.conversation_id,
+                        title: result.history_metadata.title,
+                        messages: [userMessage],
+                        date: result.history_metadata.date
+                    }
+                    isEmpty(toolMessage) ?
+                        resultConversation.messages.push(assistantMessage) :
+                        resultConversation.messages.push(toolMessage, assistantMessage)
+                }
+                if(!resultConversation){
+                    setIsLoading(false);
+                    setShowLoadingMessage(false);
+                    abortFuncs.current = abortFuncs.current.filter(a => a !== abortController);
+                    return;
+                }
+                appStateContext?.dispatch({ type: 'UPDATE_CURRENT_CHAT', payload: resultConversation });
+                isEmpty(toolMessage) ?
+                    setMessages([...messages, assistantMessage]) :
+                    setMessages([...messages, toolMessage, assistantMessage]);
+            }
+
+        } catch ( e )  {
+            if (!abortController.signal.aborted) {
+                let errorMessage = "An error occurred. Please try again. If the problem persists, please contact the site administrator.";
+                if (result.error?.message) {
+                    errorMessage = result.error.message;
+                }
+                else if (typeof result.error === "string") {
+                    errorMessage = result.error;
+                }
+                let errorChatMsg: ChatMessage = {
+                    id: uuid(),
+                    role: ERROR,
+                    content: errorMessage,
+                    date: new Date().toISOString()
+                }
+                let resultConversation;
+                if(conversationId){
+                    resultConversation = appStateContext?.state?.chatHistory?.find((conv) => conv.id === conversationId)
+                    if(!resultConversation){
+                        console.error("Conversation not found.");
+                        setIsLoading(false);
+                        setShowLoadingMessage(false);
+                        abortFuncs.current = abortFuncs.current.filter(a => a !== abortController);
+                        return;
+                    }
+                    resultConversation.messages.push(errorChatMsg);
+                }else{
+                    if(!result.history_metadata){
+                        console.error("Error retrieving data.", result);
+                        setIsLoading(false);
+                        setShowLoadingMessage(false);
+                        abortFuncs.current = abortFuncs.current.filter(a => a !== abortController);
+                        return;
+                    }
+                    resultConversation = {
+                        id: result.history_metadata.conversation_id,
+                        title: result.history_metadata.title,
+                        messages: [userMessage],
+                        date: result.history_metadata.date
+                    }
+                    resultConversation.messages.push(errorChatMsg);
+                }
+                if(!resultConversation){
+                    setIsLoading(false);
+                    setShowLoadingMessage(false);
+                    abortFuncs.current = abortFuncs.current.filter(a => a !== abortController);
+                    return;
+                }
+                appStateContext?.dispatch({ type: 'UPDATE_CURRENT_CHAT', payload: resultConversation });
+                setMessages([...messages, errorChatMsg]);
+            } else {
+                setMessages([...messages, userMessage])
+            }
+        } finally {
+            setIsLoading(false);
+            setShowLoadingMessage(false);
+            abortFuncs.current = abortFuncs.current.filter(a => a !== abortController);
+            setProcessMessages(messageStatus.Done)
+        }
+        return abortController.abort();
+
+    }
 
     const clearChat = async () => {
-        setClearingChat(true)
-        if(appStateContext?.state.currentChat?.id){
+        if(appStateContext?.state.currentChat?.id && appStateContext?.state.isCosmosDBAvailable.cosmosDB){
             let response = await historyClear(appStateContext?.state.currentChat.id)
             if(!response.ok){
                 setErrorMsg({
@@ -227,6 +436,15 @@ const Chat = () => {
         setClearingChat(false)
     };
 
+    const newChat = () => {
+        setProcessMessages(messageStatus.Processing)
+        setMessages([])
+        setIsCitationPanelOpen(false);
+        setActiveCitation(undefined);
+        appStateContext?.dispatch({ type: 'UPDATE_CURRENT_CHAT', payload: null });
+        setProcessMessages(messageStatus.Done)
+        setClearingChat(true)
+    };
 
     const stopGenerating = () => {
         abortFuncs.current.forEach(a => a.abort());
@@ -242,6 +460,55 @@ const Chat = () => {
         }
     }, [appStateContext?.state.currentChat]);
 
+    useLayoutEffect(() => {
+        const saveToDB = async (messages: ChatMessage[], id: string) => {
+            const response = await historyUpdate(messages, id)
+            return response
+        }
+
+        if (appStateContext && appStateContext.state.currentChat && processMessages === messageStatus.Done) {
+            if(appStateContext.state.isCosmosDBAvailable.cosmosDB){
+                if(!appStateContext?.state.currentChat?.messages){
+                    console.error("Failure fetching current chat state.")
+                    return
+                }
+                saveToDB(appStateContext.state.currentChat.messages, appStateContext.state.currentChat.id)
+                    .then((res) => {
+                        if(!res.ok){
+                            let errorMessage = "An error occurred. Answers can't be saved at this time. If the problem persists, please contact the site administrator.";
+                            let errorChatMsg: ChatMessage = {
+                                id: uuid(),
+                                role: ERROR,
+                                content: errorMessage,
+                                date: new Date().toISOString()
+                            }
+                            if(!appStateContext?.state.currentChat?.messages){
+                                let err: Error = {
+                                    ...new Error,
+                                    message: "Failure fetching current chat state."
+                                }
+                                throw err
+                            }
+                            setMessages([...appStateContext?.state.currentChat?.messages, errorChatMsg])
+                        }
+                        return res as Response
+                    })
+                    .catch((err) => {
+                        console.error("Error: ", err)
+                        let errRes: Response = {
+                            ...new Response,
+                            ok: false,
+                            status: 500,
+                        }
+                        return errRes;
+                    })
+            }else{
+            }
+            appStateContext?.dispatch({ type: 'UPDATE_CHAT_HISTORY', payload: appStateContext.state.currentChat });
+            setMessages(appStateContext.state.currentChat.messages)
+            setProcessMessages(messageStatus.NotRunning)
+        }
+    }, [processMessages]);
 
 
     useLayoutEffect(() => {
@@ -272,9 +539,12 @@ const Chat = () => {
         return [];
     }
 
+    const disabledButton = () => {
+        return isLoading || (messages && messages.length === 0) || clearingChat || appStateContext?.state.chatHistoryLoadingState === ChatHistoryLoadingState.Loading
+    }
+
     return (
         <div className={styles.container} role="main">
-            {(
                 <Stack horizontal className={styles.chatRoot}>
                     <div className={styles.chatContainer}>
                         {!messages || messages.length < 1 ? (
@@ -333,7 +603,7 @@ const Chat = () => {
 
                         <Stack horizontal className={styles.chatInput}>
                             {isLoading && (
-                                <Stack 
+                                <Stack
                                     horizontal
                                     className={styles.stopGeneratingContainer}
                                     role="button"
@@ -341,27 +611,48 @@ const Chat = () => {
                                     tabIndex={0}
                                     onClick={stopGenerating}
                                     onKeyDown={e => e.key === "Enter" || e.key === " " ? stopGenerating() : null}
-                                    >
-                                        <SquareRegular className={styles.stopGeneratingIcon} aria-hidden="true"/>
-                                        <span className={styles.stopGeneratingText} aria-hidden="true">Stop generating</span>
+                                >
+                                    <SquareRegular className={styles.stopGeneratingIcon} aria-hidden="true"/>
+                                    <span className={styles.stopGeneratingText} aria-hidden="true">Stop generating</span>
                                 </Stack>
                             )}
                             <Stack>
-                                <CommandBarButton
+                                {appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured && <CommandBarButton
                                     role="button"
-                                    styles={{ 
-                                        icon: { 
+                                    styles={{
+                                        icon: {
                                             color: '#FFFFFF',
                                         },
                                         root: {
                                             color: '#FFFFFF',
-                                            background: "radial-gradient(109.81% 107.82% at 100.1% 90.19%, #0F6CBD 33.63%, #2D87C3 70.31%, #8DDDD8 100%)",
-                                            cursor: "pointer"
+                                            background: "radial-gradient(109.81% 107.82% at 100.1% 90.19%, #0F6CBD 33.63%, #2D87C3 70.31%, #8DDDD8 100%)"
+                                        },
+                                        rootDisabled: {
+                                            background: "#BDBDBD"
+                                        }
+                                    }}
+                                    className={styles.newChatIcon}
+                                    iconProps={{ iconName: 'Add' }}
+                                    onClick={newChat}
+                                    disabled={clearingChat}
+                                    aria-label="start a new chat button"
+                                />}
+                                <CommandBarButton
+                                    role="button"
+                                    styles={{
+                                        icon: {
+                                            color: '#FFFFFF',
+                                        },
+                                        root: {
+                                            color: '#FFFFFF',
+                                            background: disabledButton() ? "#BDBDBD" : "radial-gradient(109.81% 107.82% at 100.1% 90.19%, #0F6CBD 33.63%, #2D87C3 70.31%, #8DDDD8 100%)",
+                                            cursor: disabledButton() ? "" : "pointer"
                                         },
                                     }}
-                                    className={styles.clearChatBroomNoCosmos}
+                                    className={appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured ? styles.clearChatBroom : styles.clearChatBroomNoCosmos}
                                     iconProps={{ iconName: 'Broom' }}
-                                    onClick={clearChat}
+                                    onClick={appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured ? clearChat : newChat}
+                                    disabled={disabledButton()}
                                     aria-label="clear chat button"
                                 />
                                 <Dialog
@@ -377,37 +668,35 @@ const Chat = () => {
                                 placeholder="Type a new question..."
                                 disabled={isLoading}
                                 onSend={(question, id) => {
-                                    makeApiRequestWithoutCosmosDB(question, id)
+                                    appStateContext?.state.isCosmosDBAvailable?.cosmosDB ? makeApiRequestWithCosmosDB(question, id) : makeApiRequestWithoutCosmosDB(question, id)
                                 }}
                                 conversationId={appStateContext?.state.currentChat?.id ? appStateContext?.state.currentChat?.id : undefined}
                             />
                         </Stack>
                     </div>
                     {/* Citation Panel */}
-                    {messages && messages.length > 0 && isCitationPanelOpen && activeCitation && ( 
-                    <Stack.Item className={styles.citationPanel} tabIndex={0} role="tabpanel" aria-label="Citations Panel">
-                        <Stack aria-label="Citations Panel Header Container" horizontal className={styles.citationPanelHeaderContainer} horizontalAlign="space-between" verticalAlign="center">
-                            <span aria-label="Citations" className={styles.citationPanelHeader}>Citations</span>
-                            <IconButton iconProps={{ iconName: 'Cancel'}} aria-label="Close citations panel" onClick={() => setIsCitationPanelOpen(false)}/>
-                        </Stack>
-                        <h5 className={styles.citationPanelTitle} tabIndex={0} title={activeCitation.url && !activeCitation.url.includes("blob.core") ? activeCitation.url : activeCitation.title ?? ""} onClick={() => onViewSource(activeCitation)}>{activeCitation.title}</h5>
-                        <div tabIndex={0}> 
-                        <ReactMarkdown 
-                            linkTarget="_blank"
-                            className={styles.citationPanelContent}
-                            children={activeCitation.content} 
-                            remarkPlugins={[remarkGfm]} 
-                            rehypePlugins={[rehypeRaw]}
-                        />
-                        </div>
-                    </Stack.Item>
-                )}
-                {(appStateContext?.state.isChatHistoryOpen)}
+                    {messages && messages.length > 0 && isCitationPanelOpen && activeCitation && (
+                        <Stack.Item className={styles.citationPanel} tabIndex={0} role="tabpanel" aria-label="Citations Panel">
+                            <Stack aria-label="Citations Panel Header Container" horizontal className={styles.citationPanelHeaderContainer} horizontalAlign="space-between" verticalAlign="center">
+                                <span aria-label="Citations" className={styles.citationPanelHeader}>Citations</span>
+                                <IconButton iconProps={{ iconName: 'Cancel'}} aria-label="Close citations panel" onClick={() => setIsCitationPanelOpen(false)}/>
+                            </Stack>
+                            <h5 className={styles.citationPanelTitle} tabIndex={0} title={activeCitation.url && !activeCitation.url.includes("blob.core") ? activeCitation.url : activeCitation.title ?? ""} onClick={() => onViewSource(activeCitation)}>{activeCitation.title}</h5>
+                            <div tabIndex={0}>
+                                <ReactMarkdown
+                                    linkTarget="_blank"
+                                    className={styles.citationPanelContent}
+                                    children={activeCitation.content}
+                                    remarkPlugins={[remarkGfm]}
+                                    rehypePlugins={[rehypeRaw]}
+                                />
+                            </div>
+                        </Stack.Item>
+                    )}
+                    {(appStateContext?.state.isChatHistoryOpen && appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured) && <ChatHistoryPanel/>}
                 </Stack>
-            )}
         </div>
     );
 };
+
 export default Chat;
-
-
