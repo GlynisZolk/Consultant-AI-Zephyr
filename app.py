@@ -433,7 +433,7 @@ def conversation_without_data(request_body):
     openai.api_version = "2023-08-01-preview"
     openai.api_key = AZURE_OPENAI_KEY
 
-    # request_messages = request_body["messages"]
+    request_messages = request_body["messages"]
     messages = [
         {
             "role": "system",
@@ -441,12 +441,12 @@ def conversation_without_data(request_body):
         }
     ]
 
-    #for message in request_messages:
-     #   if message:
-      #      messages.append({
-       #         "role": message["role"] ,
-        #        "content": message["content"]
-         #   })
+    for message in request_messages:
+        if message:
+            messages.append({
+                "role": message["role"] ,
+                "content": message["content"]
+            })
 
     response = openai.ChatCompletion.create(
         engine=AZURE_OPENAI_MODEL,
