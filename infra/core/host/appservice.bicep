@@ -6,7 +6,7 @@ param tags object = {}
 param applicationInsightsName string = ''
 param appServicePlanId string
 param keyVaultName string = ''
-param managedIdentity bool = !empty(keyVaultName)
+param managedIdentity bool = false
 
 // Runtime Properties
 @allowed([
@@ -60,7 +60,7 @@ resource appService 'Microsoft.Web/sites@2022-03-01' = {
     httpsOnly: true
   }
 
-  identity: { type: managedIdentity ? 'SystemAssigned' : 'None' }
+  identity: 'None'
 
   resource configAppSettings 'config' = {
     name: 'appsettings'
@@ -96,6 +96,6 @@ resource applicationInsights 'Microsoft.Insights/components@2020-02-02' existing
   name: applicationInsightsName
 }
 
-output identityPrincipalId string = managedIdentity ? appService.identity.principalId : ''
+output identityPrincipalId string = ''
 output name string = appService.name
 output uri string = 'https://${appService.properties.defaultHostName}'
