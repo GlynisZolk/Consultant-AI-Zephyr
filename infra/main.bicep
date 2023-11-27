@@ -95,7 +95,6 @@ module appServicePlan 'core/host/appserviceplan.bicep' = {
 
 // The application frontend
 var appServiceName = !empty(backendServiceName) ? backendServiceName : '${abbrs.webSitesAppService}backend-${resourceToken}'
-var authIssuerUri = '${environment().authentication.loginEndpoint}${tenant().tenantId}/v2.0'
 module backend 'core/host/appservice.bicep' = {
   name: 'web'
   scope: resourceGroup
@@ -178,11 +177,6 @@ module searchService 'core/search/search-services.bicep' = {
     name: !empty(searchServiceName) ? searchServiceName : 'gptkb-${resourceToken}'
     location: searchServiceResourceGroupLocation
     tags: tags
-    authOptions: {
-      aadOrApiKey: {
-        aadAuthFailureMode: 'http401WithBearerChallenge'
-      }
-    }
     sku: {
       name: !empty(searchServiceSkuName) ? searchServiceSkuName : 'standard'
     }
@@ -328,4 +322,3 @@ output AZURE_COSMOSDB_ACCOUNT string = cosmos.outputs.accountName
 output AZURE_COSMOSDB_DATABASE string = cosmos.outputs.databaseName
 output AZURE_COSMOSDB_CONVERSATIONS_CONTAINER string = cosmos.outputs.containerName
 
-output AUTH_ISSUER_URI string = authIssuerUri
