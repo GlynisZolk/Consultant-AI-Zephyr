@@ -14,7 +14,7 @@ export async function conversationApi(options: ConversationRequest, abortSignal:
 }
 
 export const historyClear = async (convId: string) : Promise<Response> => {
-    const response = await fetch("/history/clear", {
+    return await fetch("/history/clear", {
         method: "POST",
         body: JSON.stringify({
             conversation_id: convId,
@@ -23,19 +23,18 @@ export const historyClear = async (convId: string) : Promise<Response> => {
             "Content-Type": "application/json"
         },
     })
-    .then((res) => {
-        return res
-    })
-    .catch((err) => {
-        console.error("There was an issue fetching your data.");
-        let errRes: Response = {
-            ...new Response,
-            ok: false,
-            status: 500,
-        }
-        return errRes;
-    })
-    return response;
+        .then((res) => {
+            return res
+        })
+        .catch((err) => {
+            console.error("There was an issue fetching your data.");
+            let errRes: Response = {
+                ...new Response,
+                ok: false,
+                status: 500,
+            }
+            return errRes;
+        });
 }
 
 
